@@ -9,23 +9,32 @@ Built with a high-performance **Spring Boot (Java)** backend and a sleek, dynami
 ## 🚀 Key Features
 
 ### 💻 1. Cashier POS Terminal
-* **Blazing-Fast Checkouts:** Keyboard-first terminal designed for rapid item scans, barcode search, and category filtering.
-* **Smart Cart Management:** Client-side Redux-managed cart with instant subtotal, tax, and discount computations.
-* **Flexible Payments:** Supports Cash, Card, and instant UPI QR payments.
+* **Blazing-Fast Checkouts:** Highly responsive, keyboard-first cashier interface designed for rapid item selection, barcode search, and instant category filtering.
+* **Redux-Powered Cart Management:** Client-side cart system powered by Redux Toolkit that handles state changes, quantity adjustments, tax rates, branch contexts, and discounts.
+* **Flexible Payments:** Supports Cash, Card, and instant UPI payments with invoice generation.
+* **Customers Directory:** In-terminal customer lookup to link purchases to profiles for transaction history tracking.
 
-### 💳 2. Multi-Branch UPI QR Payments (Razorpay)
-* **Dynamic QR Codes:** Generates a custom UPI QR code for each transaction mapped directly to the order total.
-* **Direct Settlement:** Supports per-branch Razorpay accounts—payments settle directly into the local branch's bank account.
-* **Instant Webhooks:** Webhook-driven payment confirmation updates cashier screens instantly upon customer payment.
+### 🔑 2. Secure Authentication & Authorization (Google OAuth2 + JWT)
+* **Google OAuth2 Login:** Passwordless sign-in using Google Identity Services. First-time users are auto-registered, while existing users are securely logged in.
+* **JWT Stateless Security:** API gateways are fully secured using Spring Security filters, stateless session management, and encrypted JWT bearer token generation.
+* **Role-Based Access Control (RBAC):** Strict permission boundaries:
+  * `CASHIER`: Limited strictly to POS terminal checkout workflows, orders history, and customer directories.
+  * `MANAGER`: Full access to dashboards, branch registers, employee databases, category editors, inventory logs, and system settings.
 
-### 📦 3. Real-Time Inventory & Multi-Branch Control
-* **Low-Stock Alerts:** Automatic thresholds trigger dashboard warnings and notifications when items run low.
-* **Inventory Logs:** Complete audit trail tracking restocks, stock adjustments, and sales.
-* **Role-Based Access (RBAC):** Restrict views between cashiers (terminal access only) and managers (dashboard, analytics, settings).
+### 💳 3. Multi-Branch UPI QR Payments (Razorpay Integration)
+* **Dynamic UPI QR Codes:** Generates a custom UPI QR code for each transaction mapped directly to the order total.
+* **Per-Branch Razorpay Routing:** Each branch can configure and link its own Razorpay credentials, allowing payments to settle directly into the local branch's bank account instead of a single shared pool.
+* **Real-time Webhook Listeners:** Real-time webhook configuration listens for Razorpay payment triggers (`payment.captured`) and flags the order as paid instantly, updating the cashier interface without requiring manual screen refreshes.
 
-### 📊 4. Manager Analytics & Reports
-* **Live Dashboards:** Visualized analytics using Recharts covering revenue, payment breakdown, sales history, and branch performance.
-* **Automated Weekly PDF Reports:** Spring Boot Scheduler compiles weekly performance data into structured PDF reports and automatically emails them to branch managers.
+### 📦 4. Real-Time Multi-Branch Inventory Management
+* **Low-Stock Alert System:** Automated monitors trigger alerts and visual dashboard warnings when product quantities drop below the branch safety threshold.
+* **Transaction Auditing Logs:** Every stock change (sale, manual restock, return) generates an immutable log entry detailing the cashier ID, timestamp, quantity change, and type.
+* **Catalog Management:** Add, edit, or delete products and categories dynamically with Cloudinary cloud storage integration for product image uploads.
+
+### 📊 5. Financial Dashboard & Automated Analytics Reports
+* **Interactive Charting Engines:** Visualize branch KPIs (revenue, category breakdown, sales velocity, payment modes) via Recharts visualizations.
+* **Automated Weekly PDF Reports:** Spring Boot Scheduler compiles weekly performance data into structured PDF reports.
+* **Automated Email Reports (SMTP):** Built-in Java Mail Sender client automatically dispatches weekly PDF reports to branch managers.
 
 ---
 
