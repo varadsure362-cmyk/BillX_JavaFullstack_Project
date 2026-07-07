@@ -163,3 +163,9 @@ Here is a preview of the BillX platform interface:
 
 ### 6. PDF Report Schedules
 ![Reports Dashboard](./BillX/Project_outputs/Reports%20DahBoard.png)
+
+### 7. Sign In Page
+![Sign In Page](./BillX/Project_outputs/Signin.png)
+
+### 8. Sign Up Page
+![Sign Up Page](./BillX/Project_outputs/Signup.png)
