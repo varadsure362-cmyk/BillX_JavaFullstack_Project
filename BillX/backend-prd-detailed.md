@@ -1,0 +1,260 @@
+# Backend PRD — POS System (Spring Boot) — Detailed
+
+## 1. Purpose & Goals
+Build a production-quality REST API backend for a retail Point of Sale system supporting two roles — **Cashier** and **Manager** — across one or more branches of a single retail business. Goals:
+- Correct, auditable order/payment/refund/inventory flows (money and stock must never silently drift).
+- Clear role-based data boundaries (a manager only ever sees data for branches they're assigned to).
+- A backend an AI coding agent can build end-to-end from this spec without needing follow-up business-logic decisions.
+
+## 2. Scope
+
+**In scope:** Auth (JWT + Google OAuth2), Cashier billing flow, Razorpay payments (Card/Cash/UPI via QR), refunds, inventory, employee/branch management, category/product CRUD, customer CRUD, analytics/report endpoints, weekly PDF report generation + email, alerts.
+
+**Out of scope:** Super Admin/multi-tenant store management, subscription plans, shift tracking, Stripe, SMS notifications.
+
+## 3. User Personas
+- **Cashier** — front-of-store staff. Creates orders, takes payment, issues refunds, looks up customers. Tied to exactly one branch.
+- **Manager** — oversees one or more branches. Manages inventory, employees, products, categories, branch settings; consumes reports and alerts.
+
+## 4. System Architecture
+
+```
+React (Netlify) --HTTPS/JWT--> Spring Boot API (Koyeb) --JDBC--> MySQL (Aiven)
+                                        |
+                                        |--> Razorpay API (payments, QR, webhooks)
+                                        |--> Cloudinary API (product images)
+                                        |--> SMTP (weekly report email)
+                                        |--> Google OAuth2 (login)
+```
+
+Layered architecture per module: `controller` → `service` (interface + impl) → `repository` (Spring Data JPA) → `entity`. DTOs used at controller boundary only; entities never returned directly from controllers.
+
+### 4.1 Suggested Package Structure
+```
+com.possystem
+ ├── config          (SecurityConfig, CorsConfig, SwaggerConfig, SchedulerConfig)
+ ├── security        (JwtProvider, JwtAuthFilter, CustomUserDetailsService, OAuth2SuccessHandler)
+ ├── controller
+ ├── service
+ │    └── impl
+ ├── repository
+ ├── entity
+ ├── dto
+ │    ├── request
+ │    └── response
+ ├── mapper
+ ├── exception       (GlobalExceptionHandler, custom exceptions)
+ ├── util            (PdfGenerator, RazorpayClientWrapper, CloudinaryUtil)
+ └── scheduler       (WeeklyReportScheduler)
+```
+
+## 5. Tech Stack (with rationale)
+| Concern | Choice | Why |
+|---|---|---|
+| Language/Runtime | Java 17, Spring Boot 3.x | LTS, current Spring Boot baseline |
+| DB | MySQL 8 (Aiven, free tier) | Matches resume goal; managed, always-on with sleep-on-inactivity caveat |
+| ORM | Spring Data JPA / Hibernate | Standard, less boilerplate than JDBC |
+| Auth | JJWT + Spring Security OAuth2 Client | Stateless JWT auth; Google login without building own OAuth flow |
+| Payments | Razorpay Java SDK | Only Razorpay supports Dynamic QR for UPI, per decision earlier |
+| PDF | OpenPDF | Free/open license (avoids iText's commercial licensing issue) |
+| Mail | Spring Boot Starter Mail | Needed for weekly report delivery |
+| Image upload | Cloudinary SDK | Free tier, simple API, offloads image storage from your DB/server |
+| Docs | springdoc-openapi (Swagger UI) | Lets you and reviewers explore/test the API without Postman setup |
+
+## 6. Data Model — Detailed
+
+(Full DDL lives in `schema-migration.sql`. This section documents *why* and the business rules encoded in the schema.)
+
+- **users.branch_id** is only meaningful for `CASHIER` role; must be `NOT NULL` at the application-validation level for cashiers even though the column is nullable (nullable to allow a manager row to omit it).
+- **manager_branches** is the source of truth for manager scope — every manager-facing query must join through this table, never trust a client-supplied `branchId` alone without verifying membership.
+- **products.stock_quantity** is decremented transactionally when an order moves to `PAID`, and incremented on refund of that line item. This must happen inside the same DB transaction as order status update to avoid stock drift on partial failures.
+- **orders.status** state machine:
+  ```
+  PENDING --(payment success)--> PAID --(refund, full)--> REFUNDED
+                                   |--(refund, partial)--> PARTIALLY_REFUNDED
+  PENDING --(cashier cancels before payment)--> CANCELLED
+  ```
+  No other transitions are valid. Reject invalid transitions with `409 Conflict`.
+- **payments** table can have more than one row per order only in the CASH-fallback-after-failed-UPI scenario — but only one row may ever reach `SUCCESS` status per order; enforce at the service layer.
+- **inventory_logs** is append-only and never updated/deleted — it's the audit trail. `products.stock_quantity` is the current cached value; `inventory_logs` is the ledger.
+- **alerts** are generated by scheduled/triggered checks, not by direct user CRUD — see §11.
+
+## 7. Authentication & Authorization — Detailed
+
+### 7.1 JWT
+- Claims: `sub` (user id), `email`, `role`, `branchId` (nullable), `iat`, `exp`.
+- Access token expiry: 24 hours (acceptable for a resume project; document that a refresh-token flow would be the production hardening step).
+- Signing algorithm: HS256, secret from `JWT_SECRET` env var (min 256-bit).
+
+### 7.2 Login flows
+1. **Local login** — `POST /api/auth/login` → verify BCrypt hash → issue JWT.
+2. **Google OAuth2** — frontend redirects to `/oauth2/authorization/google` (Spring Security default endpoint). On success, a custom `OAuth2SuccessHandler`:
+   - Looks up `User` by email from the Google profile.
+   - If found → issue JWT, redirect to frontend with token in URL fragment or via a short-lived exchange code (avoid tokens in browser history if possible).
+   - If not found → create new `User` with `role = CASHIER`, `auth_provider = GOOGLE`, `branch_id = NULL`, then issue JWT. Frontend should show a "waiting for branch assignment" state until a manager assigns them a branch.
+
+### 7.3 RBAC matrix (enforce via `@PreAuthorize` + service-layer branch checks)
+| Endpoint group | CASHIER | MANAGER |
+|---|---|---|
+| Orders (own branch) | Create, Read, own branch only | Read-only, assigned branches |
+| Refunds | Create (own branch) | Read-only |
+| Products/Categories | Read only | Full CRUD (assigned branches) |
+| Employees/Branches | No access | Full CRUD (assigned branches; branch creation always allowed) |
+| Reports/Alerts | No access | Full access (assigned branches) |
+| Payments | Create/poll (own branch orders) | Read-only |
+
+### 7.4 Security config notes
+- CSRF disabled (stateless JWT API).
+- CORS: allow only `FRONTEND_URL` env var origin, not `*`.
+- Password requirements enforced via Bean Validation on signup DTO: min 8 chars, at least 1 number.
+
+## 8. API Specification (Detailed Contracts)
+
+> Convention: all responses wrapped in `ApiResponse<T> { success, message, data }`. All list endpoints return `Page<T>` shape: `{ content, totalElements, totalPages, pageNumber, pageSize }`.
+
+### 8.1 Auth
+
+**POST /api/auth/signup**
+Request:
+```json
+{ "fullName": "string", "email": "string", "password": "string", "phone": "string" }
+```
+Response `201`:
+```json
+{ "success": true, "data": { "token": "jwt", "user": { "id":1, "role":"CASHIER", "branchId": null } } }
+```
+Errors: `409` if email exists.
+
+**POST /api/auth/login**
+Request: `{ "email": "string", "password": "string" }`
+Response `200`: same shape as signup.
+Errors: `401` invalid credentials.
+
+**GET /api/auth/me** — requires JWT. Returns current user profile including branch/managed-branch info.
+
+### 8.2 Products
+
+**GET /api/products?branchId=&categoryId=&search=&page=0&size=20**
+Response: paginated `ProductResponse[]` — `{ id, name, sku, price, imageUrl, stockQuantity, lowStockThreshold, categoryId, categoryName }`
+
+**POST /api/products** (Manager only, multipart/form-data for image)
+Request fields: `name, sku, categoryId, branchId, price, stockQuantity, lowStockThreshold, image(file, optional)`
+Validation: `price >= 0`, `stockQuantity >= 0`, `sku` unique.
+Errors: `400` validation, `409` duplicate SKU.
+
+**PUT /api/products/{id}/inventory**
+Request: `{ "changeType": "RESTOCK|ADJUSTMENT", "quantityChanged": 10 }`
+Behavior: updates `stock_quantity`, writes an `inventory_logs` row, and — if resulting quantity crosses below `low_stock_threshold` — creates a `LOW_STOCK` alert (idempotent: don't create a duplicate unread alert for the same product within 24h).
+
+### 8.3 Orders
+
+**POST /api/orders** (Cashier only)
+Request:
+```json
+{
+  "customerId": null,
+  "items": [{ "productId": 5, "quantity": 2 }],
+  "discountType": "PERCENT",
+  "discountAmount": 10,
+  "orderNote": "string"
+}
+```
+Server-side computation (never trust client-sent totals):
+1. Fetch each product's current price; recompute `lineTotal = price * quantity`.
+2. `subtotal = sum(lineTotal)`.
+3. Apply discount: `discountValue = discountType == PERCENT ? subtotal * discountAmount/100 : discountAmount`. Cap discount so it cannot exceed `subtotal` (floor total at 0).
+4. `totalAmount = subtotal - discountValue + taxAmount (if applicable, else 0)`.
+5. Create order with `status = PENDING`. Stock is **not** decremented yet — only decremented on payment success (see §9).
+Errors: `400` if any product is out of stock (`stockQuantity < requested quantity`) — return which product(s) failed.
+
+**GET /api/orders/{id}/invoice** — generates PDF on the fly (OpenPDF) with branch header, line items, totals, payment method. Returns `application/pdf`.
+
+### 8.4 Payments
+
+**POST /api/payments/qr**
+Request: `{ "orderId": 123 }`
+Behavior: calls Razorpay `Order.create` (amount in paise) then Razorpay QR Code API bound to that order amount. Persists a `payments` row with `status = PENDING`, `razorpay_order_id` set.
+Response: `{ "qrImageUrl": "...", "qrId": "...", "razorpayOrderId": "..." }`
+
+**POST /api/payments/webhook**
+- Verify `X-Razorpay-Signature` header against payload using webhook secret (`RAZORPAY_WEBHOOK_SECRET`). Reject with `400` if invalid — do not process unverified payloads.
+- On `payment.captured` event: find `payments` row by `razorpay_order_id`, set `status = SUCCESS`, `razorpay_payment_id`, then transactionally: set `orders.status = PAID` and decrement `products.stock_quantity` for each order item (write `inventory_logs` entries with `changeType = SALE`).
+- On `payment.failed`: set `payments.status = FAILED`; order remains `PENDING` so cashier can retry or switch to cash.
+- Endpoint must be idempotent — if the same webhook event id is received twice, do not double-decrement stock (store/check a `processed_webhook_events` table or dedupe via unique constraint on `razorpay_payment_id`).
+
+**POST /api/payments/cash**
+Request: `{ "orderId": 123, "amountReceived": 500 }`
+Behavior: creates `payments` row with `method=CASH, status=SUCCESS` immediately, triggers the same order-paid + stock-decrement transaction as the webhook path (extract this into a shared `OrderPaymentService.markPaid(orderId, payment)` method — do not duplicate the logic).
+
+### 8.5 Refunds
+
+**POST /api/refunds**
+Request: `{ "orderId": 123, "reason": "string", "amount": 200, "itemIds": [55] }`
+Validation:
+- Order must be `PAID` or `PARTIALLY_REFUNDED`.
+- `amount` cannot exceed `order.totalAmount - previouslyRefundedAmount`.
+Behavior: creates `refunds` row, restocks the refunded item quantities (`inventory_logs` with `changeType = ADJUSTMENT`), sets order status to `REFUNDED` (if full) or `PARTIALLY_REFUNDED`. If cumulative refunds on a branch within a rolling 24h window exceed a configurable threshold (default ₹5,000, per the original spec), create a `REFUND_SPIKE` alert.
+
+### 8.6 Reports (all Manager-only, all branch-scoped and date-range-filterable)
+
+Each of these must be backed by a real aggregation query (`GROUP BY`, `SUM`, `COUNT`) — never pre-computed/cached stale values unless explicitly built as a materialized/cached layer with a documented refresh interval.
+
+- `GET /api/reports/overview?branchId=`
+- `GET /api/reports/payment-breakdown?branchId=&range=daily|weekly|monthly`
+- `GET /api/reports/sales-trend?branchId=&range=`
+- `GET /api/reports/top-products?branchId=&limit=5`
+- `GET /api/reports/cashier-performance?branchId=`
+- `GET /api/reports/sales-by-category?branchId=`
+- `GET /api/reports/refund-spikes?branchId=&thresholdOverride=`
+
+Response shapes should be flat arrays ready for direct Recharts consumption, e.g.:
+```json
+[{ "label": "CARD", "value": 6996, "count": 2 }, { "label": "UPI", "value": 6695, "count": 1 }]
+```
+
+## 9. Business Rules & Edge Cases Checklist
+- Stock is reserved/checked at order creation but only **committed (decremented)** at payment success — prevents phantom stock loss from abandoned/failed payments.
+- Concurrent orders for the same low-stock product: use a pessimistic lock or `SELECT ... FOR UPDATE` (or optimistic locking with `@Version`) on `products` during the stock-decrement step to prevent overselling.
+- Discount can never make `totalAmount` negative.
+- A cashier can only refund orders belonging to their own branch.
+- A manager can only write to branches present in their `manager_branches` rows — validate this on every write endpoint, not just reads.
+- Webhook idempotency (see §8.4) is mandatory, not optional.
+- Deleting a category with existing products should be blocked (`409`) or should set `category_id = NULL` on those products — pick one and apply consistently (recommend: block deletion, require reassignment first).
+
+## 10. Weekly PDF Report — Detailed Spec
+- Cron: `@Scheduled(cron = "0 0 6 * * MON")` — every Monday 6 AM server time (configurable via `application.properties`).
+- Per branch, aggregate the trailing 7 days: total sales, order count, refund total, payment breakdown, top 5 products, low stock items (below threshold at time of generation), cashier performance, category-wise sales.
+- PDF sections in order: Header (branch name, date range) → Sales Summary → Payment Breakdown → Top Products → Cashier Performance → Category Sales → Low Stock Items.
+- Email subject: `Weekly Report — {branchName} — {weekStartDate} to {weekEndDate}`. Send to all managers assigned to that branch (via `manager_branches`).
+- Store a `weekly_reports` row with file path/URL and recipients for the history screen.
+- Manual trigger endpoint (`POST /api/reports/weekly/generate`) must reuse the exact same generation service the scheduler calls — no duplicated logic.
+
+## 11. Alerts — Generation Logic
+- `LOW_STOCK`: triggered inside the inventory-update path whenever `stock_quantity` crosses below `low_stock_threshold` (edge-triggered, not level-triggered, to avoid alert spam on every request).
+- `NO_SALES`: a scheduled daily job flags products with zero `order_items` in the trailing 7 days.
+- `REFUND_SPIKE`: triggered inside the refund-creation path per §8.5.
+
+## 12. Non-Functional Requirements
+- **Exception handling:** `@ControllerAdvice` mapping validation errors → `400`, not-found → `404`, auth failures → `401/403`, conflicts → `409`, everything else → `500` with a generic message (never leak stack traces to the client).
+- **Logging:** structured logs for all payment and refund state transitions (order id, amount, actor, timestamp) — this is your audit trail.
+- **Pagination:** default page size 20, max 100, enforced server-side even if client requests more.
+- **Money:** `BigDecimal` everywhere; never `float`/`double` for currency fields.
+- **Config:** all secrets (`JWT_SECRET`, `DB_PASSWORD`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CLOUDINARY_URL`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `FRONTEND_URL`) via environment variables, documented in a `.env.example` file, never committed.
+
+## 13. Testing Strategy (minimum viable, for resume credibility)
+- Unit tests (JUnit + Mockito) for: discount calculation, order total computation, stock decrement logic, refund cap validation, JWT generation/parsing.
+- One integration test (Testcontainers + MySQL) covering: create order → pay via cash → verify stock decremented → refund → verify stock restored.
+
+## 14. Deployment Notes (Koyeb)
+- Build via native Java buildpack (Maven, `pom.xml` auto-detected) — no Dockerfile.
+- Set all env vars listed in §12 in the Koyeb dashboard.
+- Health check endpoint: expose Spring Boot Actuator `/actuator/health` for Koyeb's health probe.
+
+## 15. Acceptance Criteria (Definition of Done)
+- [ ] A cashier can log in, create an order, pay via Razorpay QR (test mode) or cash, and download a PDF invoice.
+- [ ] Stock correctly decrements only after payment success, never on order creation alone.
+- [ ] A manager sees data only for branches they're assigned to; a manager assigned to Branch A cannot fetch Branch B's orders even with a manipulated `branchId` query param.
+- [ ] All manager dashboard chart endpoints return real, non-empty data reflecting actual DB state.
+- [ ] Weekly PDF report can be triggered manually and arrives via email with correct branch-scoped data.
+- [ ] Refund cannot exceed the order's remaining refundable amount.
+- [ ] Google OAuth2 login creates a new cashier account on first login and logs in existing users on subsequent attempts.

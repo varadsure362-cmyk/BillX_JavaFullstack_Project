@@ -1,0 +1,28 @@
+package com.project.BillX.repository;
+
+import com.project.BillX.model.Product;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    Optional<Product> findBySku(String sku);
+    boolean existsBySku(String sku);
+    boolean existsByCategoryId(Long categoryId);
+    List<Product> findByBranchId(Long branchId);
+
+    @Query("SELECT p FROM Product p WHERE p.branch.id = :branchId " +
+           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
+           "AND (:search IS NULL OR :search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%')))")
+    Page<Product> findProducts(@Param("branchId") Long branchId, 
+                              @Param("categoryId") Long categoryId, 
+                              @Param("search") String search, 
+                              Pageable pageable);
+}

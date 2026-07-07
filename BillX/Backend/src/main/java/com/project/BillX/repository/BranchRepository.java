@@ -1,0 +1,9 @@
+package com.project.BillX.repository;
+
+import com.project.BillX.model.Branch;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface BranchRepository extends JpaRepository<Branch, Long> {
+}
