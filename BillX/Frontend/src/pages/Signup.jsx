@@ -39,7 +39,7 @@ export const Signup = () => {
   });
 
   const handleGoogleSignup = () => {
-    const backendBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://billx-javafullstack-project.onrender.com';
+    const backendBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8082';
     window.location.href = `${backendBaseUrl}/oauth2/authorization/google`;
   };
 
