@@ -1,4 +1,5 @@
-# BillX — Next-Generation Point of Sale (POS) System
+# BillX — Next-Generation Point of Sale (POS) System 
+visit link:https://vercel.com/billx/bill-x-java-fullstack-project
 
 BillX is a premium, full-stack Point of Sale (POS) application designed to modernize retail billing, cashier terminal workflows, multi-branch management, and real-time inventory tracking.
 
