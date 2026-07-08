@@ -33,8 +33,8 @@ public class SecurityConfig {
     private final String frontendUrl;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
-                          OAuth2SuccessHandler oAuth2SuccessHandler,
-                          @Value("${app.frontend-url}") String frontendUrl) {
+            OAuth2SuccessHandler oAuth2SuccessHandler,
+            @Value("${app.frontend-url}") String frontendUrl) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.oAuth2SuccessHandler = oAuth2SuccessHandler;
         this.frontendUrl = frontendUrl;
@@ -43,26 +43,24 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable)
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/api/auth/signup",
-                    "/api/auth/login",
-                    "/api/payments/webhook",
-                    "/actuator/health",
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/oauth2/**",
-                    "/login/oauth2/**"
-                ).permitAll()
-                .anyRequest().authenticated()
-            )
-            .oauth2Login(oauth2 -> oauth2
-                .successHandler(oAuth2SuccessHandler)
-            );
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/api/auth/signup",
+                                "/api/auth/login",
+                                "/api/payments/webhook",
+                                "/actuator/health",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/oauth2/**",
+                                "/login/oauth2/**")
+                        .permitAll()
+                        .anyRequest().authenticated())
+                .oauth2Login(oauth2 -> oauth2
+                        .successHandler(oAuth2SuccessHandler));
 
         http.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
@@ -73,12 +71,12 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(List.of(
-            frontendUrl,
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:5175",
-            "http://localhost:3000"
-        ));
+                frontendUrl,
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:5175",
+                "http://localhost:3000",
+                "https://billxposproject.netlify.app"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept"));
         configuration.setAllowCredentials(true);
