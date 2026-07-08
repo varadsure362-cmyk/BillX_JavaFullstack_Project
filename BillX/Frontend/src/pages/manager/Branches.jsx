@@ -380,11 +380,11 @@ export const Branches = () => {
                         <span className="text-gray-450 font-semibold block mb-1">Webhook URL</span>
                         <div className="flex items-center gap-1.5 bg-white dark:bg-gray-950 p-2.5 rounded-lg border border-gray-150 dark:border-gray-855">
                           <code className="text-gray-700 dark:text-gray-300 select-all font-semibold break-all flex-1 text-[11px]">
-                            {(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8082') + '/api/payments/webhook'}
+                            {(import.meta.env.VITE_API_BASE_URL || 'https://billx-javafullstack-project.onrender.com') + '/api/payments/webhook'}
                           </code>
                           <button
                             onClick={() => {
-                              navigator.clipboard.writeText((import.meta.env.VITE_API_BASE_URL || 'http://localhost:8082') + '/api/payments/webhook');
+                              navigator.clipboard.writeText((import.meta.env.VITE_API_BASE_URL || 'https://billx-javafullstack-project.onrender.com') + '/api/payments/webhook');
                               alert("Webhook URL copied to clipboard!");
                             }}
                             className="p-1 hover:bg-gray-100 dark:hover:bg-gray-855 rounded text-gray-400 hover:text-gray-600 shrink-0"
